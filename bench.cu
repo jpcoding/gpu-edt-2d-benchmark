@@ -17,6 +17,8 @@
 #include <vector>
 #include <cmath>
 #include <chrono>
+#include <string>
+#include <fstream>
 #include "edt_pba.hpp"   // ours 3D (PBA_ prefixed; provides edt_3d_pba, pba_buffer_size)
 #include "edt_2d.hpp"    // ours native-2D (edt_2d_pba, our interface over NUS 2D kernels)
 
@@ -32,8 +34,12 @@ using clk = std::chrono::high_resolution_clock;
 static double ms_since(clk::time_point t0){ return std::chrono::duration<double,std::milli>(clk::now()-t0).count(); }
 
 int main(int argc, char** argv){
+  // Default: synthetic random sites at several sizes.
+  // NYX-slice mode:  ./bench nyx <file.f32> <dim>   (binary image = quantization edges, rel_eb=1e-2)
   std::vector<int> sizes = {256,512,1024,2048,4096};
-  if (argc > 1){ sizes.clear(); for(int i=1;i<argc;i++) sizes.push_back(atoi(argv[i])); }
+  bool nyx = false; const char* nyxfile = nullptr; int nyxdim = 0;
+  if (argc > 3 && std::string(argv[1]) == "nyx") { nyx = true; nyxfile = argv[2]; nyxdim = atoi(argv[3]); sizes = {nyxdim}; }
+  else if (argc > 1){ sizes.clear(); for(int i=1;i<argc;i++) sizes.push_back(atoi(argv[i])); }
   const int K = 10;            // timed iterations (report best)
   const int site_pct = 1;      // ~1% of pixels are sites
 
@@ -54,8 +60,24 @@ int main(int argc, char** argv){
     size_t N = (size_t)S*S;
     // sites: 1 = site
     std::vector<unsigned char> site(N,0);
-    srand(12345);
-    size_t nsite=0; for(size_t i=0;i<N;i++){ if(rand()%100 < site_pct){ site[i]=1; nsite++; } }
+    size_t nsite=0;
+    if (nyx) {
+      // binary image = quantization edges of a SxS slice of a NYX field (rel_eb = 1e-2)
+      std::vector<float> v(N); { std::ifstream f(nyxfile,std::ios::binary); f.read((char*)v.data(), N*4); }
+      double mn=v[0],mx=v[0]; for(size_t i=0;i<N;i++){ if(v[i]<mn)mn=v[i]; if(v[i]>mx)mx=v[i]; }
+      double eb = 1e-2*(mx-mn), inv = 1.0/(2*eb);
+      std::vector<int> q(N); for(size_t i=0;i<N;i++) q[i]=(int)llround(v[i]*inv);
+      for(int y=0;y<S;y++) for(int x=0;x<S;x++){ int c=q[(size_t)y*S+x]; bool b=false;
+        if(x>0   && q[(size_t)y*S+x-1]!=c) b=true;
+        if(x<S-1 && q[(size_t)y*S+x+1]!=c) b=true;
+        if(y>0   && q[(size_t)(y-1)*S+x]!=c) b=true;
+        if(y<S-1 && q[(size_t)(y+1)*S+x]!=c) b=true;
+        if(b){ site[(size_t)y*S+x]=1; nsite++; } }
+      printf("# NYX slice %s  %dx%d  edge sites = %.1f%%\n#\n", nyxfile, S,S, 100.0*nsite/N);
+    } else {
+      srand(12345);
+      for(size_t i=0;i<N;i++){ if(rand()%100 < site_pct){ site[i]=1; nsite++; } }
+    }
     if(nsite==0){ site[0]=1; nsite=1; }
 
     // reference EDT (exact, double) computed by "ours" if available, else NUS

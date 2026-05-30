@@ -76,9 +76,16 @@ Requires the **CUDA Toolkit** (with NPP — included by default). Tested with CU
 
 ```bash
 make                 # builds ./bench  (nvcc -arch=native)
-./bench              # default sizes: 256 512 1024 2048 4096
+./bench              # default sizes: 256 512 1024 2048 4096   (random sites)
 ./bench 512 4096     # custom sizes
+./bench nyx field.f32 512   # real data: binary image = quantization edges of a
+                            # 512x512 slice of a NYX field (rel_eb=1e-2)
 ```
+
+The `nyx` mode is a real-data correctness check: on a 512² slice of NYX `velocity_x`
+(~35% edge sites) on the RTX 5090, `ours-2D` matches NUS/the 3D code bit-for-bit
+(`max_err 0.00`) and stays competitive (1.10 vs NUS 1.12 Gpix/s) — see
+[`results/rtx5090_nyx.txt`](results/rtx5090_nyx.txt).
 
 If `nvcc`/NPP are not on your default path:
 ```bash
