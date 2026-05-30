@@ -39,6 +39,12 @@ size   impl            time_ms       Mpix/s       Gpix/s    max_err
 
 (full log: [`results/rtx5090.txt`](results/rtx5090.txt))
 
+> **nsys/ncu profiling of NPP** ([`results/npp_profile_5090.md`](results/npp_profile_5090.md))
+> reveals that NPP's `nppiDistanceTransformPBA` runs the **NUS PBA+ kernels** (`kernelFloodDown`,
+> `kernelProximatePoints`, `kernelColor`, …) plus its own format-conversion kernels — the "PBA" in
+> the name *is* the Parallel Banding Algorithm. So all three implementations here run the same core
+> algorithm; the dominant kernel (`kernelColor`) is latency-bound and no kernel is compute-bound.
+
 **Reading the table**
 - `max_err` is the largest distance disagreement vs. the reference field. **ours-2D / NUS = 0.00**
   (bit-exact, including vs. the independent 3D code); **NPP = 0.97** — NPP returns the distance as a
