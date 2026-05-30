@@ -46,7 +46,11 @@ __global__ void edt2d_extract(const short2* tex, int W, int H, int size,
 
 inline int edt2d_next_pow2(int v) { int s = 64; while (s < v) s <<= 1; return s; }  // PBA wants pow2 square
 inline int edt_2d_texsize(unsigned int W, unsigned int H) { return edt2d_next_pow2((int)(W > H ? W : H)); }
-inline int edt_2d_band(int size) { int p = size/64; return p < 1 ? 1 : p; }
+inline int edt_2d_band(int size) { int p = size/64; return p < 1 ? 1 : p; }   // phase1 (=margin alloc)
+// Tuned phase-2/3 bands (5090 sweep, correctness-verified): phase3 block is (64, m3) so m3<=16;
+// m3=16 (vs the common default 2) keeps kernelColor at full 1024-thread occupancy -> ~1.5x overall.
+inline int edt_2d_m2(int size) { return size >= 64 ? 64 : size; }
+inline int edt_2d_m3(int size) { return size >= 16 ? 16 : size; }
 
 // Native-2D EDT. Same I/O contract as edt_3d_pba (boundary -> index + distance, device).
 // The engine (square textures) must be initialized once by the caller:
@@ -54,7 +58,7 @@ inline int edt_2d_band(int size) { int p = size/64; return p < 1 ? 1 : p; }
 // This keeps it stateless and lets it share the engine with a direct NUS run in the same process.
 inline void edt_2d_pba(char* d_boundary, int* index, float* distance, unsigned int W, unsigned int H) {
   int size = edt_2d_texsize(W,H);
-  int p1 = edt_2d_band(size), p2 = p1, p3 = 2;
+  int p1 = edt_2d_band(size), p2 = edt_2d_m2(size), p3 = edt_2d_m3(size);
   dim3 b(16,16);
   { dim3 g((size+15)/16,(size+15)/16); edt2d_fill_input<<<g,b>>>(d_boundary, pba2DInputDevice(), W,H,size); }
   pba2DCompute(p1, p2, p3);

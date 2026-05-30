@@ -58,3 +58,21 @@ make npp_prof
 nsys profile --stats=true -o /tmp/npp_nsys ./npp_prof 4096 20    # per-kernel time
 ncu --set basic ./npp_prof 2048 1                                # per-kernel detail
 ```
+
+## Consequence: band tuning beats NPP
+
+`kernelColor` being latency-bound (SM 6.7%) is an **occupancy** problem, not a bandwidth wall:
+its block is `(64, m3)`, and the common default `m3=2` gives only 128 threads/block. Raising the
+phase-3 band to the max valid `m3=16` (1024-thread blocks) — plus `m2=64` — restores occupancy.
+A correctness-verified sweep ([`prof/tune.cu`](../prof/tune.cu)) on the 5090:
+
+| size | default (m3=2) Gpix/s | tuned (m2=64,m3=16) Gpix/s | speedup | NPP Gpix/s |
+|---|---|---|---|---|
+| 512²  | 1.70  | 2.54  | 1.50× | 2.46 |
+| 1024² | 4.39  | 7.00  | 1.59× | 6.53 |
+| 2048² | 9.85  | 15.42 | 1.56× | 13.83 |
+| 4096² | 15.27 | 22.77 | 1.49× | 17.10 |
+
+So the **tuned PBA overtakes NPP** — NPP runs the same kernels but with fixed bands it can't adapt.
+(`m3=32/64` *look* faster but exceed the 1024-thread block limit → the launch fails; the sweep
+rejects them by verifying the output, which is why correctness-checking the tuner mattered.)

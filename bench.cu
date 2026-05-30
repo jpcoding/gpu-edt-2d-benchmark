@@ -128,7 +128,7 @@ int main(int argc, char** argv){
 
     // ============================ NUS PBA+ 2D ============================
     {
-      int p1 = eband, p2 = eband, p3 = 2;                         // same bands as the shared engine
+      int p1 = eband, p2 = edt_2d_m2(tex), p3 = edt_2d_m3(tex);   // tuned bands (see edt_2d.hpp)
       std::vector<short> in(2*N), out(2*N);
       for(size_t i=0;i<N;i++){ int x=i%S, y=i/S;
         if(site[i]){ in[2*i]=(short)x; in[2*i+1]=(short)y; } else { in[2*i]=NUS_MARKER; in[2*i+1]=NUS_MARKER; } }

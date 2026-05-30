@@ -17,25 +17,30 @@ device-resident, warm-up + best-of-10), and **cross-verified** to produce the sa
 
 ```
 size   impl            time_ms       Mpix/s       Gpix/s    max_err
-256    ours-3Don2D      0.2279        287.6        0.288        ref
-256    ours-2D          0.1128        580.8        0.581       0.00
-256    NUS-PBA+         0.1105        593.1        0.593       0.00
-256    NPP              0.0807        811.6        0.812       0.97
-512    ours-3Don2D      0.4613        568.3        0.568        ref
-512    ours-2D          0.1583       1655.6        1.656       0.00
-512    NUS-PBA+         0.1556       1684.4        1.684       0.00
-512    NPP              0.1074       2441.8        2.442       0.97
-1024   ours-3Don2D      0.9384       1117.4        1.117        ref
-1024   ours-2D          0.2438       4301.2        4.301       0.00
-1024   NUS-PBA+         0.2379       4408.4        4.408       0.00
-1024   NPP              0.1611       6508.6        6.509       0.97
-2048   ours-2D          0.4424       9481.5        9.482       0.00
-2048   NUS-PBA+         0.4239       9895.3        9.895       0.00
-2048   NPP              0.3027      13856.3       13.856       0.97
-4096   ours-2D          1.2400      13530.4       13.530       0.00
-4096   NUS-PBA+         1.0926      15355.5       15.356       0.00
-4096   NPP              0.9810      17102.0       17.102       0.97
+256    ours-3Don2D      0.2279        287.5        0.288        ref
+256    ours-2D          0.0821        798.1        0.798       0.00
+256    NUS-PBA+         0.0785        834.4        0.834       0.00
+256    NPP              0.0810        809.5        0.810       0.97
+512    ours-3Don2D      0.4619        567.6        0.568        ref
+512    ours-2D          0.1071       2447.4        2.447       0.00
+512    NUS-PBA+         0.1041       2517.3        2.517       0.00
+512    NPP              0.1066       2458.9        2.459       0.97
+1024   ours-3Don2D      0.9381       1117.8        1.118        ref
+1024   ours-2D          0.1574       6660.4        6.660       0.00
+1024   NUS-PBA+         0.1519       6901.1        6.901       0.00
+1024   NPP              0.1606       6528.1        6.528       0.97
+2048   ours-2D          0.2928      14324.6       14.325       0.00
+2048   NUS-PBA+         0.2721      15416.4       15.416       0.00
+2048   NPP              0.3032      13832.0       13.832       0.97
+4096   ours-2D          0.8772      19126.3       19.126       0.00
+4096   NUS-PBA+         0.7297      22992.0       22.992       0.00
+4096   NPP              0.9809      17103.5       17.103       0.97
 ```
+
+> **The PBA implementations use tuned band parameters and beat NPP** (up to 1.34× at 4096²).
+> NPP runs the same algorithm but with *fixed* bands; an ncu-guided sweep (see below) showed its
+> dominant `kernelColor` is latency-bound at low occupancy, so raising the phase-3 band from the
+> common default `m3=2` to `m3=16` (full 1024-thread blocks) gives ~1.5× — enough to overtake NPP.
 
 (full log: [`results/rtx5090.txt`](results/rtx5090.txt))
 
@@ -49,8 +54,9 @@ size   impl            time_ms       Mpix/s       Gpix/s    max_err
 - `max_err` is the largest distance disagreement vs. the reference field. **ours-2D / NUS = 0.00**
   (bit-exact, including vs. the independent 3D code); **NPP = 0.97** — NPP returns the distance as a
   *truncated* 16-bit integer, so it is `< 1` off everywhere, i.e. correct. Everything agrees.
-- **NPP** is fastest; **`ours-2D` and NUS-PBA+ are within ~2–12% of each other** and both scale to
-  4096². `ours-2D` runs at every size (no 1024 cap).
+- **With tuned bands, `ours-2D` and NUS-PBA+ beat NPP** (e.g. 4096²: NUS 23.0, ours-2D 19.1, NPP
+  17.1 Gpix/s); see the tuning note above. `ours-2D` trails NUS slightly because it also runs our
+  `boundary→index/distance` conversion kernels. Both run at every size (no 1024 cap).
 - **`ours-3Don2D`** (the 3D code run as `W×H×1`) is ~3.9× slower and capped at 1024 — kept only to
   show the cost of that shortcut.
 
