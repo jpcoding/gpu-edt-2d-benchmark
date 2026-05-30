@@ -17,7 +17,8 @@
 #include <vector>
 #include <cmath>
 #include <chrono>
-#include "edt_pba.hpp"   // ours (PBA_ prefixed; provides edt_3d_pba, pba_buffer_size)
+#include "edt_pba.hpp"   // ours 3D (PBA_ prefixed; provides edt_3d_pba, pba_buffer_size)
+#include "edt_2d.hpp"    // ours native-2D (edt_2d_pba, pba2d_buffer_size)
 
 // ---- NUS PBA+ 2D API (third_party/nus/pba2DHost.cu) ----
 extern "C" void pba2DInitialization(int textureSize, int phase1Band);
@@ -77,7 +78,24 @@ int main(int argc, char** argv){
         best=std::min(best,ms_since(t)); }
       std::vector<float> dist(N); cudaMemcpy(dist.data(),d_dist,N*4,cudaMemcpyDeviceToHost);
       ref_dist.assign(N,0); for(size_t i=0;i<N;i++) ref_dist[i]=dist[i];
-      printf("%-6d %-12s %10.4f %12.1f %12.3f %10s\n", S,"ours",best, N/1e6/(best/1e3), N/1e9/(best/1e3), "ref");
+      printf("%-6d %-12s %10.4f %12.1f %12.3f %10s\n", S,"ours-3Don2D",best, N/1e6/(best/1e3), N/1e9/(best/1e3), "ref");
+      cudaFree(d_b); cudaFree(d_idx); cudaFree(d_dist); cudaFree(b0); cudaFree(b1);
+    }
+
+    // ============================ OURS-2D (native, <=1024) ============================
+    if (S <= 1024){
+      std::vector<char> bnd(N); for(size_t i=0;i<N;i++) bnd[i]=site[i]?1:0;
+      char* d_b; cudaMalloc(&d_b,N); cudaMemcpy(d_b,bnd.data(),N,cudaMemcpyHostToDevice);
+      int* d_idx; cudaMalloc(&d_idx,N*sizeof(int));
+      float* d_dist; cudaMalloc(&d_dist,N*sizeof(float));
+      size_t pb=pba2d_buffer_size(S,S); int *b0,*b1; cudaMalloc(&b0,pb); cudaMalloc(&b1,pb);
+      edt_2d_pba(d_b,d_idx,d_dist,S,S,b0,b1); cudaDeviceSynchronize(); // warmup
+      double best=1e30;
+      for(int k=0;k<K;k++){ cudaDeviceSynchronize(); auto t=clk::now();
+        edt_2d_pba(d_b,d_idx,d_dist,S,S,b0,b1); cudaDeviceSynchronize(); best=std::min(best,ms_since(t)); }
+      std::vector<float> dist(N); cudaMemcpy(dist.data(),d_dist,N*4,cudaMemcpyDeviceToHost);
+      double maxerr=0; for(size_t i=0;i<N;i++) maxerr=std::max(maxerr, fabs((double)dist[i]-ref_dist[i]));
+      printf("%-6d %-12s %10.4f %12.1f %12.3f %10.2f\n", S,"ours-2D",best, N/1e6/(best/1e3), N/1e9/(best/1e3), maxerr);
       cudaFree(d_b); cudaFree(d_idx); cudaFree(d_dist); cudaFree(b0); cudaFree(b1);
     }
 

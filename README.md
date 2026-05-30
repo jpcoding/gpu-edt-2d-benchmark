@@ -7,7 +7,7 @@ Euclidean Distance Transform / Voronoi diagram** on random binary images:
 |---|---|---|---|---|
 | 1 | **NVIDIA NPP** `nppiDistanceTransformPBA` | 2D-native, vendor library | ships with the CUDA Toolkit | NVIDIA EULA (linked, not redistributed) |
 | 2 | **NUS PBA+** `pba2D` | 2D-native, academic reference | [orzzzjq/Parallel-Banding-Algorithm-plus](https://github.com/orzzzjq/Parallel-Banding-Algorithm-plus) | MIT (`third_party/nus/LICENSE`) |
-| 3 | **"ours"** `edt_3d_pba` | **3D**-native PBA, run as `W×H×1` | this project | MIT |
+| 3 | **"ours"** `edt_2d_pba` / `edt_3d_pba` | **3D** Parallel Banding, in a 2D-specialized driver and run as `W×H×1` | this project | MIT |
 
 All three are fed the **same** random binary image, timed **compute-only** (data already
 device-resident, warm-up + best-of-10), and **cross-verified** to produce the same EDT.
@@ -16,19 +16,22 @@ device-resident, warm-up + best-of-10), and **cross-verified** to produce the sa
 
 ```
 size   impl            time_ms       Mpix/s       Gpix/s    max_err
-256    ours             0.2280        287.4        0.287        ref
-256    NUS-PBA+         0.1107        592.1        0.592       0.00
-256    NPP              0.0808        811.5        0.812       0.97
-512    ours             0.4614        568.2        0.568        ref
-512    NUS-PBA+         0.1557       1684.1        1.684       0.00
-512    NPP              0.1071       2448.5        2.449       0.97
-1024   ours             0.9409       1114.5        1.114        ref
-1024   NUS-PBA+         0.2381       4403.4        4.403       0.00
-1024   NPP              0.1609       6516.4        6.516       0.97
-2048   NUS-PBA+         0.4231       9914.0        9.914       0.00
-2048   NPP              0.3034      13822.2       13.822       0.97
-4096   NUS-PBA+         1.0909      15378.8       15.379       0.00
-4096   NPP              0.9814      17095.5       17.096       0.97
+256    ours-3Don2D      0.2289        286.3        0.286        ref
+256    ours-2D          0.2269        288.8        0.289       0.00
+256    NUS-PBA+         0.1094        599.2        0.599       0.00
+256    NPP              0.0810        809.2        0.809       0.97
+512    ours-3Don2D      0.4622        567.2        0.567        ref
+512    ours-2D          0.4597        570.3        0.570       0.00
+512    NUS-PBA+         0.1553       1687.9        1.688       0.00
+512    NPP              0.1068       2455.2        2.455       0.97
+1024   ours-3Don2D      0.9404       1115.0        1.115        ref
+1024   ours-2D          0.9316       1125.5        1.126       0.00
+1024   NUS-PBA+         0.2368       4428.2        4.428       0.00
+1024   NPP              0.1607       6526.0        6.526       0.97
+2048   NUS-PBA+         0.4230       9915.6        9.916       0.00
+2048   NPP              0.3033      13826.9       13.827       0.97
+4096   NUS-PBA+         1.0900      15392.6       15.393       0.00
+4096   NPP              0.9810      17101.7       17.102       0.97
 ```
 
 (full log: [`results/rtx5090.txt`](results/rtx5090.txt))
@@ -38,22 +41,32 @@ size   impl            time_ms       Mpix/s       Gpix/s    max_err
   (bit-exact with ours); **NPP = 0.97** — NPP returns the distance as a *truncated* 16-bit
   integer, so it is off by `< 1` everywhere, i.e. correct. All three agree.
 - **NPP** is fastest, **NUS PBA+** close behind; both scale to large images.
-- **"ours" trails by ~3–6×, on purpose** — see the honest note below. It is included as a
-  *correctness cross-check*, not as a competitive 2D code.
+- **The two "ours" rows are bit-exact (max_err 0.00) but ~3.9× slower** at 1024². They are
+  included as a *correctness cross-check* of our 3D PBA, not as competitive 2D codes — see why below.
 
 ## Why "ours" is slower (and capped at 1024)
 
-`edt_3d_pba` is a **3D** Parallel Banding implementation. To run a 2D image it is treated as
-a `W×H×1` volume, which incurs two artifacts a native-2D code never pays:
+The two `ours` rows are this project's **3D** Parallel Banding code applied to a 2D image:
+- `ours-3Don2D` — the image as a `W×H×1` volume (the 3D axis chooser pads depth 1 → 4).
+- `ours-2D` — a 2D-specialized driver ([`ours/edt_2d.hpp`](ours/edt_2d.hpp)) that drives the
+  *same kernels* with `z_size = 1` (no depth padding).
 
-1. **Depth padding 1 → 4.** The 3D pipeline rounds the depth up to a multiple of 4, so it
-   processes ~**4× the cells** of the real 2D image.
-2. **In-plane cap of 1024.** Coordinates are packed in 10 bits, so each in-plane dimension is
-   limited to 1024. Hence "ours" only appears for sizes ≤ 1024.
+They land within ~1% of each other — so the **depth padding is essentially free** (the extra
+z-planes are empty and early-out). The real gap to native-2D PBA is **structural**:
 
-So this benchmark is *not* a claim that our PBA is competitive in 2D — it is a faithful,
-verifiable comparison that (a) our 3D PBA computes the exact EDT (matches NUS bit-for-bit and
-NPP within truncation), and (b) quantifies the cost of using a 3D code for a 2D task.
+> Our pipeline is `FloodZ → Maurer/Color → Maurer/Color`. For a 2D image the cheap flood pass
+> is spent on the *trivial* Z axis, so **both** real axes (X and Y) must be resolved by the two
+> *expensive* Maurer/Color passes. A native 2D PBA (NUS) spends its flood on a **real** axis and
+> needs only **one** proximate/color pass — roughly half the expensive work.
+
+Closing that gap would require **native 2D kernels** (i.e. re-implementing the 2D algorithm),
+not reusing the 3D one. There is also a hard **in-plane cap of 1024** (coordinates are packed in
+10 bits), so the `ours` rows only appear for sizes ≤ 1024.
+
+So this benchmark is *not* a claim that our PBA is competitive in 2D. It is a faithful,
+verifiable comparison showing (a) our 3D PBA computes the exact EDT (bit-for-bit with NUS,
+within truncation of NPP — including via the native-2D driver), and (b) what it costs to use a
+3D-structured PBA for a 2D task.
 
 ## Build & run
 
@@ -88,6 +101,7 @@ export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
 bench.cu                 unified harness (generate, run all three, time, verify)
 Makefile
 ours/edt_pba.hpp         our 3D PBA (MIT)
+ours/edt_2d.hpp          native-2D driver over the same kernels (z_size=1), MIT
 third_party/nus/         NUS PBA+ 2D, ported to CUDA 12+ (removed <device_functions.h>); MIT
 results/rtx5090.txt      benchmark log
 ```
