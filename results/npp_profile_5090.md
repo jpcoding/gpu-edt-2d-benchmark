@@ -73,6 +73,20 @@ A correctness-verified sweep ([`prof/tune.cu`](../prof/tune.cu)) on the 5090:
 | 2048² | 9.85  | 15.42 | 1.56× | 13.83 |
 | 4096² | 15.27 | 22.77 | 1.49× | 17.10 |
 
-So the **tuned PBA overtakes NPP** — NPP runs the same kernels but with fixed bands it can't adapt.
 (`m3=32/64` *look* faster but exceed the 1024-thread block limit → the launch fails; the sweep
 rejects them by verifying the output, which is why correctness-checking the tuner mattered.)
+
+### Does NPP use a bad band? (it's closed-source, so we read the launch config via ncu)
+
+NPP is closed-source, but the profiler still reports each kernel's grid/block dims. NPP's
+`kernelColor` block is `(64, m3)`, so block-size / 64 = its `m3`:
+
+| size | NPP kernelColor block | NPP m3 |
+|---|---|---|
+| 1024² | 1024 | **16** |
+| 4096² | 512 | **8** |
+
+So **NPP does adapt its bands** — `m3=16` at 1024² (= our tuned value; the two tie there), but
+only `m3=8` at 4096². The tuned PBA overtakes NPP at 4096² specifically because `m3=16` beats
+NPP's `m3=8` on this GPU — NPP's adaptive heuristic just isn't optimal for Blackwell at large
+sizes. (Earlier wording claimed NPP used "fixed bands"; that was wrong — corrected by this check.)

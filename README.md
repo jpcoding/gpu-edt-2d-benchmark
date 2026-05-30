@@ -37,10 +37,13 @@ size   impl            time_ms       Mpix/s       Gpix/s    max_err
 4096   NPP              0.9809      17103.5       17.103       0.97
 ```
 
-> **The PBA implementations use tuned band parameters and beat NPP** (up to 1.34× at 4096²).
-> NPP runs the same algorithm but with *fixed* bands; an ncu-guided sweep (see below) showed its
-> dominant `kernelColor` is latency-bound at low occupancy, so raising the phase-3 band from the
-> common default `m3=2` to `m3=16` (full 1024-thread blocks) gives ~1.5× — enough to overtake NPP.
+> **With tuned bands the PBA implementations beat NPP at 4096² (1.34×) and tie it at ≤1024².**
+> ncu showed the dominant `kernelColor` (block `(64, m3)`) is latency-bound when under-occupied;
+> raising the common default `m3=2` to the max valid `m3=16` (1024-thread blocks) gives ~1.5×.
+> NPP runs the *same* algorithm and **does adapt** its bands (its `kernelColor` block, read from the
+> binary via ncu, is `m3=16` at 1024² but only `m3=8` at 4096²) — so it ties at small sizes and is
+> overtaken at 4096² precisely because `m3=16` beats its `m3=8` on this GPU. See
+> [`results/npp_profile_5090.md`](results/npp_profile_5090.md).
 
 (full log: [`results/rtx5090.txt`](results/rtx5090.txt))
 
