@@ -7,7 +7,8 @@ Euclidean Distance Transform / Voronoi diagram** on random binary images:
 |---|---|---|---|---|
 | 1 | **NVIDIA NPP** `nppiDistanceTransformPBA` | 2D-native, vendor library | ships with the CUDA Toolkit | NVIDIA EULA (linked, not redistributed) |
 | 2 | **NUS PBA+** `pba2D` | 2D-native, academic reference | [orzzzjq/Parallel-Banding-Algorithm-plus](https://github.com/orzzzjq/Parallel-Banding-Algorithm-plus) | MIT (`third_party/nus/LICENSE`) |
-| 3 | **"ours"** `edt_2d_pba` / `edt_3d_pba` | **3D** Parallel Banding, in a 2D-specialized driver and run as `W×H×1` | this project | MIT |
+| 3 | **"ours-2D"** `edt_2d_pba` | **native 2D** EDT with our 3D-style device interface (over the NUS 2D kernels) | this project | MIT |
+| 4 | **"ours-3Don2D"** `edt_3d_pba` | our **3D** PBA run as `W×H×1` (shortcut, for contrast) | this project | MIT |
 
 All three are fed the **same** random binary image, timed **compute-only** (data already
 device-resident, warm-up + best-of-10), and **cross-verified** to produce the same EDT.
@@ -16,57 +17,57 @@ device-resident, warm-up + best-of-10), and **cross-verified** to produce the sa
 
 ```
 size   impl            time_ms       Mpix/s       Gpix/s    max_err
-256    ours-3Don2D      0.2289        286.3        0.286        ref
-256    ours-2D          0.2269        288.8        0.289       0.00
-256    NUS-PBA+         0.1094        599.2        0.599       0.00
-256    NPP              0.0810        809.2        0.809       0.97
-512    ours-3Don2D      0.4622        567.2        0.567        ref
-512    ours-2D          0.4597        570.3        0.570       0.00
-512    NUS-PBA+         0.1553       1687.9        1.688       0.00
-512    NPP              0.1068       2455.2        2.455       0.97
-1024   ours-3Don2D      0.9404       1115.0        1.115        ref
-1024   ours-2D          0.9316       1125.5        1.126       0.00
-1024   NUS-PBA+         0.2368       4428.2        4.428       0.00
-1024   NPP              0.1607       6526.0        6.526       0.97
-2048   NUS-PBA+         0.4230       9915.6        9.916       0.00
-2048   NPP              0.3033      13826.9       13.827       0.97
-4096   NUS-PBA+         1.0900      15392.6       15.393       0.00
-4096   NPP              0.9810      17101.7       17.102       0.97
+256    ours-3Don2D      0.2279        287.6        0.288        ref
+256    ours-2D          0.1128        580.8        0.581       0.00
+256    NUS-PBA+         0.1105        593.1        0.593       0.00
+256    NPP              0.0807        811.6        0.812       0.97
+512    ours-3Don2D      0.4613        568.3        0.568        ref
+512    ours-2D          0.1583       1655.6        1.656       0.00
+512    NUS-PBA+         0.1556       1684.4        1.684       0.00
+512    NPP              0.1074       2441.8        2.442       0.97
+1024   ours-3Don2D      0.9384       1117.4        1.117        ref
+1024   ours-2D          0.2438       4301.2        4.301       0.00
+1024   NUS-PBA+         0.2379       4408.4        4.408       0.00
+1024   NPP              0.1611       6508.6        6.509       0.97
+2048   ours-2D          0.4424       9481.5        9.482       0.00
+2048   NUS-PBA+         0.4239       9895.3        9.895       0.00
+2048   NPP              0.3027      13856.3       13.856       0.97
+4096   ours-2D          1.2400      13530.4       13.530       0.00
+4096   NUS-PBA+         1.0926      15355.5       15.356       0.00
+4096   NPP              0.9810      17102.0       17.102       0.97
 ```
 
 (full log: [`results/rtx5090.txt`](results/rtx5090.txt))
 
 **Reading the table**
-- `max_err` is the largest distance disagreement vs. the reference field. **NUS = 0.00**
-  (bit-exact with ours); **NPP = 0.97** — NPP returns the distance as a *truncated* 16-bit
-  integer, so it is off by `< 1` everywhere, i.e. correct. All three agree.
-- **NPP** is fastest, **NUS PBA+** close behind; both scale to large images.
-- **The two "ours" rows are bit-exact (max_err 0.00) but ~3.9× slower** at 1024². They are
-  included as a *correctness cross-check* of our 3D PBA, not as competitive 2D codes — see why below.
+- `max_err` is the largest distance disagreement vs. the reference field. **ours-2D / NUS = 0.00**
+  (bit-exact, including vs. the independent 3D code); **NPP = 0.97** — NPP returns the distance as a
+  *truncated* 16-bit integer, so it is `< 1` off everywhere, i.e. correct. Everything agrees.
+- **NPP** is fastest; **`ours-2D` and NUS-PBA+ are within ~2–12% of each other** and both scale to
+  4096². `ours-2D` runs at every size (no 1024 cap).
+- **`ours-3Don2D`** (the 3D code run as `W×H×1`) is ~3.9× slower and capped at 1024 — kept only to
+  show the cost of that shortcut.
 
-## Why "ours" is slower (and capped at 1024)
+## The two "ours" entries
 
-The two `ours` rows are this project's **3D** Parallel Banding code applied to a 2D image:
-- `ours-3Don2D` — the image as a `W×H×1` volume (the 3D axis chooser pads depth 1 → 4).
-- `ours-2D` — a 2D-specialized driver ([`ours/edt_2d.hpp`](ours/edt_2d.hpp)) that drives the
-  *same kernels* with `z_size = 1` (no depth padding).
+- **`ours-2D`** ([`ours/edt_2d.hpp`](ours/edt_2d.hpp)) is a **native 2D EDT** that exposes the same
+  device interface as this project's 3D EDT — a 1-byte boundary map in, a packed nearest-site
+  `index` + `float distance` out, all device-resident — so it drops into the 2D version of our
+  pipeline. Its core is the **NUS PBA+ 2D kernels** (MIT), driven through a thin device bridge,
+  exactly as our 3D EDT wraps the NUS 3D kernels. It is therefore ~as fast as NUS; the small gap
+  (and its growth at 4096²) is the cost of our `boundary → index/distance` conversion kernels.
+  16-bit coordinates ⇒ **no 1024 cap** (up to 32767/axis).
 
-They land within ~1% of each other — so the **depth padding is essentially free** (the extra
-z-planes are empty and early-out). The real gap to native-2D PBA is **structural**:
+- **`ours-3Don2D`** ([`ours/edt_pba.hpp`](ours/edt_pba.hpp)) is our **3D** PBA applied to a `W×H×1`
+  volume. It is ~3.9× slower and capped at 1024, *not* because of depth padding (that is nearly
+  free — the padded z-planes are empty), but **structurally**: the 3D pipeline spends its cheap
+  flood pass on the trivial Z axis, so both real axes are resolved by two *expensive* Maurer/Color
+  passes, where a native 2D PBA spends its flood on a real axis and needs only one. It is kept as a
+  correctness cross-check (bit-for-bit with the native path) and to quantify that shortcut.
 
-> Our pipeline is `FloodZ → Maurer/Color → Maurer/Color`. For a 2D image the cheap flood pass
-> is spent on the *trivial* Z axis, so **both** real axes (X and Y) must be resolved by the two
-> *expensive* Maurer/Color passes. A native 2D PBA (NUS) spends its flood on a **real** axis and
-> needs only **one** proximate/color pass — roughly half the expensive work.
-
-Closing that gap would require **native 2D kernels** (i.e. re-implementing the 2D algorithm),
-not reusing the 3D one. There is also a hard **in-plane cap of 1024** (coordinates are packed in
-10 bits), so the `ours` rows only appear for sizes ≤ 1024.
-
-So this benchmark is *not* a claim that our PBA is competitive in 2D. It is a faithful,
-verifiable comparison showing (a) our 3D PBA computes the exact EDT (bit-for-bit with NUS,
-within truncation of NPP — including via the native-2D driver), and (b) what it costs to use a
-3D-structured PBA for a 2D task.
+So: `ours-2D` is a competitive, exact, uncapped native-2D EDT with our pipeline's interface;
+`ours-3Don2D` shows what using the 3D code for 2D costs. Both agree bit-for-bit with NUS and within
+truncation of NPP.
 
 ## Build & run
 

@@ -1,41 +1,63 @@
 #pragma once
-#include "edt_pba.hpp"
-// Native-2D specialization of our 3D Parallel Banding code.
+#include <cuda_runtime.h>
+#include <cstdio>
+#include <cmath>
+// Native 2D Euclidean Distance Transform with a device interface shaped like our 3D EDT
+// (edt_3d_pba): a 1-byte boundary map (1 = site) goes in; a packed nearest-site index and a
+// float distance come out — all device-resident. Drop-in for the 2D version of the pipeline.
 //
-// The 3D entry (edt_3d_pba) treats a W x H image as a W x H x 1 volume, but its axis
-// chooser rounds the depth up to a multiple of 4 -> it processes 4x the cells. Here we
-// drive the exact same kernels with z_size = 1 (no depth padding), so a 2D image costs
-// one z-plane instead of four. The two Maurer/Color passes are the real X and Y axes;
-// the flood-Z pass is trivial (a 1-element column). Output is the exact 2D EDT.
+// The core 2D Parallel Banding kernels are the (MIT) NUS PBA+ 2D code in third_party/nus,
+// driven here through a thin device bridge — the same lineage as how our 3D EDT wraps the
+// NUS 3D kernels. Coordinates are 16-bit (short2), so this has NO 1024 cap (up to 32767/axis)
+// and uses a native 2-axis schedule (flood + one proximate/color), unlike the 3D-on-2D path.
 //
-// Coordinates are still packed in 10 bits => max 1024 per axis (same as the 3D code).
+// Output formats (match what the 3D path hands to fill_sign / compensation):
+//   index[y*W+x]    = packed nearest-site index  = (ny << 16) | (nx & 0xFFFF)
+//   distance[y*W+x] = exact Euclidean distance to the nearest site
 
-inline size_t pba2d_buffer_size(uint W, uint H) {
-  int xy = pba_next_mult((W > H ? W : H), 32); if (xy < 32) xy = 32;
-  return (size_t)xy * xy * 1 * sizeof(int);   // z_size = 1
+#define EDT2D_MARKER (-32768)
+extern "C" void    pba2DInitialization(int textureSize, int phase1Band);
+extern "C" void    pba2DDeinitialization();
+void               pba2DCompute(int m1, int m2, int m3);   // C++ linkage in pba2DHost.cu
+extern "C" short2* pba2DInputDevice();
+extern "C" short2* pba2DOutputDevice();
+
+__global__ void edt2d_fill_input(const char* boundary, short2* tex, int W, int H, int size) {
+  int x = blockIdx.x*blockDim.x + threadIdx.x;
+  int y = blockIdx.y*blockDim.y + threadIdx.y;
+  if (x >= size || y >= size) return;
+  short2 v;
+  if (x < W && y < H && boundary[(size_t)y*W + x] == (char)1) { v.x = (short)x; v.y = (short)y; }
+  else { v.x = EDT2D_MARKER; v.y = EDT2D_MARKER; }
+  tex[(size_t)y*size + x] = v;                       // square texture, padding = MARKER
 }
 
-// d_buf0/d_buf1: two device buffers each >= pba2d_buffer_size(W,H) bytes.
-inline void edt_2d_pba(char* d_boundary, int* index, float* distance,
-                       uint W, uint H, int* d_buf0, int* d_buf1) {
-  int xy_size = pba_next_mult((W > H ? W : H), 32); if (xy_size < 32) xy_size = 32;
-  const int z_size = 1, z_axis = 2;
-  if (xy_size > 1024) { printf("[edt_2d_pba] ERROR: xy_size=%d > 1024 (10-bit coord limit)\n", xy_size); return; }
+__global__ void edt2d_extract(const short2* tex, int W, int H, int size,
+                              unsigned int* index, float* distance) {
+  int x = blockIdx.x*blockDim.x + threadIdx.x;
+  int y = blockIdx.y*blockDim.y + threadIdx.y;
+  if (x >= W || y >= H) return;
+  short2 s = tex[(size_t)y*size + x];
+  float dx = (float)s.x - x, dy = (float)s.y - y;
+  size_t o = (size_t)y*W + x;
+  distance[o] = sqrtf(dx*dx + dy*dy);
+  index[o] = ((unsigned int)(unsigned short)s.y << 16) | (unsigned int)(unsigned short)s.x;
+}
 
-  int* d_buf[2] = {d_buf0, d_buf1};
-  { dim3 block(8,8,8); dim3 grid((xy_size+7)/8,(xy_size+7)/8,1);
-    pba_init_from_boundary<<<grid,block>>>(d_boundary, d_buf[0], W,H,1, xy_size, z_size, z_axis); }
-  int cur = 0;
-  { dim3 block(PBA_BLOCKX,PBA_BLOCKY);
-    dim3 grid((xy_size+PBA_BLOCKX-1)/PBA_BLOCKX,(xy_size+PBA_BLOCKY-1)/PBA_BLOCKY);
-    pba_kernelFloodZ<<<grid,block>>>(d_buf[cur], d_buf[1-cur], xy_size, z_size); cur = 1-cur; }
-  for (int pass = 0; pass < 2; ++pass) {   // Maurer(Y/X) + Color, twice
-    { dim3 block(PBA_BLOCKX,PBA_BLOCKY);
-      dim3 grid((xy_size+PBA_BLOCKX-1)/PBA_BLOCKX,(z_size+PBA_BLOCKY-1)/PBA_BLOCKY);
-      pba_kernelMaurerAxis<<<grid,block>>>(d_buf[cur], d_buf[1-cur], xy_size, z_size); }
-    { dim3 block(PBA_BLOCKSIZE,2); dim3 grid(xy_size/PBA_BLOCKSIZE, z_size);
-      pba_kernelColorAxis<<<grid,block>>>(d_buf[1-cur], d_buf[cur], xy_size, z_size); }
-  }
-  { dim3 block(64,4,2); dim3 grid((W+63)/64,(H+3)/4,1);
-    pba_extract_result<<<grid,block>>>(d_buf[cur], (unsigned int*)index, distance, W,H,1, xy_size, z_size, z_axis); }
+inline int edt2d_next_pow2(int v) { int s = 64; while (s < v) s <<= 1; return s; }  // PBA wants pow2 square
+inline int edt_2d_texsize(unsigned int W, unsigned int H) { return edt2d_next_pow2((int)(W > H ? W : H)); }
+inline int edt_2d_band(int size) { int p = size/64; return p < 1 ? 1 : p; }
+
+// Native-2D EDT. Same I/O contract as edt_3d_pba (boundary -> index + distance, device).
+// The engine (square textures) must be initialized once by the caller:
+//   int tex = edt_2d_texsize(W,H);  pba2DInitialization(tex, edt_2d_band(tex));   ... pba2DDeinitialization();
+// This keeps it stateless and lets it share the engine with a direct NUS run in the same process.
+inline void edt_2d_pba(char* d_boundary, int* index, float* distance, unsigned int W, unsigned int H) {
+  int size = edt_2d_texsize(W,H);
+  int p1 = edt_2d_band(size), p2 = p1, p3 = 2;
+  dim3 b(16,16);
+  { dim3 g((size+15)/16,(size+15)/16); edt2d_fill_input<<<g,b>>>(d_boundary, pba2DInputDevice(), W,H,size); }
+  pba2DCompute(p1, p2, p3);
+  { dim3 g((W+15)/16,(H+15)/16); edt2d_extract<<<g,b>>>(pba2DOutputDevice(), W,H,size,
+                                                        (unsigned int*)index, distance); }
 }

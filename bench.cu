@@ -1,14 +1,14 @@
-// 2D Euclidean Distance Transform / Voronoi — three GPU implementations, head to head.
-//   (1) NVIDIA NPP   nppiDistanceTransformPBA   (2D-native, vendor library)
-//   (2) NUS  PBA+    pba2D                       (2D-native, academic reference, MIT)
-//   (3) "ours"       edt_3d_pba (this project)   (3D-native PBA, run as W x H x 1)
+// 2D Euclidean Distance Transform / Voronoi — GPU implementations, head to head.
+//   NPP          nppiDistanceTransformPBA      (NVIDIA vendor library, 2D-native)
+//   NUS-PBA+     pba2D                          (academic reference, 2D-native, MIT)
+//   ours-2D      edt_2d_pba (this project)      (native 2D EDT with our 3D-style device
+//                                                interface: boundary -> index + distance;
+//                                                built on the NUS 2D kernels)
+//   ours-3Don2D  edt_3d_pba (this project)      (our 3D PBA run as W x H x 1; kept to show
+//                                                the cost of the 3D-on-2D shortcut; <=1024)
 //
-// Same random binary image fed to all three; compute-only timing (data device-resident,
-// warmup + best-of-K); cross-verified that every implementation yields the same EDT.
-//
-// NOTE on "ours": it is a 3D PBA. For a 2D image it pads depth 1 -> 4 (a 4x cell tax the
-// native-2D codes don't pay) and caps each in-plane dim at 1024 (10-bit packed coords).
-// So it is included only for sizes <= 1024 and is expected to trail the native-2D codes.
+// Same random binary image fed to all; compute-only timing (data device-resident, warmup +
+// best-of-K); cross-verified that every implementation yields the same EDT (max_err vs ref).
 #include <cuda_runtime.h>
 #include <npp.h>
 #include <cstdio>
@@ -18,7 +18,7 @@
 #include <cmath>
 #include <chrono>
 #include "edt_pba.hpp"   // ours 3D (PBA_ prefixed; provides edt_3d_pba, pba_buffer_size)
-#include "edt_2d.hpp"    // ours native-2D (edt_2d_pba, pba2d_buffer_size)
+#include "edt_2d.hpp"    // ours native-2D (edt_2d_pba, our interface over NUS 2D kernels)
 
 // ---- NUS PBA+ 2D API (third_party/nus/pba2DHost.cu) ----
 extern "C" void pba2DInitialization(int textureSize, int phase1Band);
@@ -63,6 +63,10 @@ int main(int argc, char** argv){
 
     cudaEvent_t ev0,ev1; cudaEventCreate(&ev0); cudaEventCreate(&ev1);
 
+    // shared NUS 2D engine (used by both ours-2D and the direct NUS-PBA+ run)
+    int tex = edt_2d_texsize(S,S), eband = edt_2d_band(tex);
+    pba2DInitialization(tex, eband);
+
     // ============================ OURS (<=1024) ============================
     bool ours_ok = (S <= 1024);
     if (ours_ok){
@@ -82,31 +86,31 @@ int main(int argc, char** argv){
       cudaFree(d_b); cudaFree(d_idx); cudaFree(d_dist); cudaFree(b0); cudaFree(b1);
     }
 
-    // ============================ OURS-2D (native, <=1024) ============================
-    if (S <= 1024){
+    // ===================== OURS-2D (native 2D EDT, our interface, all sizes) =====================
+    {
       std::vector<char> bnd(N); for(size_t i=0;i<N;i++) bnd[i]=site[i]?1:0;
       char* d_b; cudaMalloc(&d_b,N); cudaMemcpy(d_b,bnd.data(),N,cudaMemcpyHostToDevice);
       int* d_idx; cudaMalloc(&d_idx,N*sizeof(int));
       float* d_dist; cudaMalloc(&d_dist,N*sizeof(float));
-      size_t pb=pba2d_buffer_size(S,S); int *b0,*b1; cudaMalloc(&b0,pb); cudaMalloc(&b1,pb);
-      edt_2d_pba(d_b,d_idx,d_dist,S,S,b0,b1); cudaDeviceSynchronize(); // warmup
+      edt_2d_pba(d_b,d_idx,d_dist,S,S); cudaDeviceSynchronize(); // warmup (also inits the engine)
       double best=1e30;
       for(int k=0;k<K;k++){ cudaDeviceSynchronize(); auto t=clk::now();
-        edt_2d_pba(d_b,d_idx,d_dist,S,S,b0,b1); cudaDeviceSynchronize(); best=std::min(best,ms_since(t)); }
+        edt_2d_pba(d_b,d_idx,d_dist,S,S); cudaDeviceSynchronize(); best=std::min(best,ms_since(t)); }
       std::vector<float> dist(N); cudaMemcpy(dist.data(),d_dist,N*4,cudaMemcpyDeviceToHost);
-      double maxerr=0; for(size_t i=0;i<N;i++) maxerr=std::max(maxerr, fabs((double)dist[i]-ref_dist[i]));
+      std::vector<double> myd(N); for(size_t i=0;i<N;i++) myd[i]=dist[i];
+      double maxerr=0;
+      if(ref_dist.empty()) ref_dist=myd; else for(size_t i=0;i<N;i++) maxerr=std::max(maxerr,fabs(myd[i]-ref_dist[i]));
       printf("%-6d %-12s %10.4f %12.1f %12.3f %10.2f\n", S,"ours-2D",best, N/1e6/(best/1e3), N/1e9/(best/1e3), maxerr);
-      cudaFree(d_b); cudaFree(d_idx); cudaFree(d_dist); cudaFree(b0); cudaFree(b1);
+      cudaFree(d_b); cudaFree(d_idx); cudaFree(d_dist);
     }
 
     // ============================ NUS PBA+ 2D ============================
     {
-      int p1 = std::max(1, S/64), p2 = std::max(1, S/64), p3 = 2;   // p1<=S/64, must divide S
+      int p1 = eband, p2 = eband, p3 = 2;                         // same bands as the shared engine
       std::vector<short> in(2*N), out(2*N);
       for(size_t i=0;i<N;i++){ int x=i%S, y=i/S;
         if(site[i]){ in[2*i]=(short)x; in[2*i+1]=(short)y; } else { in[2*i]=NUS_MARKER; in[2*i+1]=NUS_MARKER; } }
-      pba2DInitialization(S, p1);
-      pba2DVoronoiDiagram(in.data(), out.data(), p1,p2,p3);        // correctness pass
+      pba2DVoronoiDiagram(in.data(), out.data(), p1,p2,p3);        // correctness pass (shared engine)
       // timed compute-only (re-init input each iter; H2D untimed)
       double best=1e30;
       for(int k=0;k<K;k++){ pba2DInitializeInput(in.data()); cudaDeviceSynchronize();
@@ -119,7 +123,6 @@ int main(int argc, char** argv){
         nus_dist[i]=sqrt(double(nx-x)*(nx-x)+double(ny-y)*(ny-y)); }
       if(ref_dist.empty()) ref_dist=nus_dist;   // NUS becomes ref when ours absent (S>1024)
       for(size_t i=0;i<N;i++) maxerr=std::max(maxerr, fabs(nus_dist[i]-ref_dist[i]));
-      pba2DDeinitialization();
       printf("%-6d %-12s %10.4f %12.1f %12.3f %10.2f\n", S,"NUS-PBA+",best, N/1e6/(best/1e3), N/1e9/(best/1e3), maxerr);
     }
 
@@ -139,6 +142,7 @@ int main(int argc, char** argv){
       printf("%-6d %-12s %10.4f %12.1f %12.3f %10.2f\n", S,"NPP",best, N/1e6/(best/1e3), N/1e9/(best/1e3), maxerr);
       cudaFree(dS); cudaFree(dT); cudaFree(dBuf);
     }
+    pba2DDeinitialization();   // tear down the shared engine for this size
     printf("#\n");
   }
   return 0;

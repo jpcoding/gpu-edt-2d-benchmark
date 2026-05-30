@@ -163,3 +163,9 @@ void pba2DVoronoiDiagram(short *input, short *output, int m1, int m2, int m3)
     // Copy back the result
     cudaMemcpy(output, pbaTextures[1], pbaMemSize, cudaMemcpyDeviceToHost); 
 }
+
+// --- device-resident bridge for the "ours" 2D wrapper (edt_2d_pba) ---
+// Exposes the internal ping-pong textures so a caller can fill the input and read the
+// output on-device (no host round-trip), matching our 3D EDT's device interface.
+extern "C" short2* pba2DInputDevice()  { return pbaTextures[0]; }   // write site map here
+extern "C" short2* pba2DOutputDevice() { return pbaTextures[1]; }   // nearest-site after pba2DCompute
