@@ -59,9 +59,32 @@ extern "C" void pba2DDeinitialization();
 extern "C" void pba2DVoronoiDiagram(short *input, short *output, int phase1Band,
                                     int phase2Band, int phase3Band);
 
-// MARKER is used to mark blank pixels in the texture. 
-// Any uncolored pixels will have x = MARKER. 
+// MARKER is used to mark blank pixels in the texture.
+// Any uncolored pixels will have x = MARKER.
 // Input texture should have x = MARKER for all pixels other than sites
 #define MARKER      -32768
+
+// ===========================================================================
+// Lower-level / device-resident API.
+// (Added for the gpu-edt-2d-benchmark packaging: declarations only — the
+//  implementations and all kernels in pba2DKernel.h are the original NUS code,
+//  unchanged. This just publishes the public symbols so callers don't have to
+//  redeclare them.)
+// ===========================================================================
+#include <vector_types.h>   // short2
+
+// Upload a host site map into the device input buffer (H2D). Destructive:
+// pba2DCompute overwrites the buffer, so call this before each Compute.
+void pba2DInitializeInput(short *input);
+
+// Run the three PBA phases on the current device input buffer (no H2D/D2H).
+// Bands must divide textureSize. Result lands in the output texture.
+void pba2DCompute(int phase1Band, int phase2Band, int phase3Band);
+
+// Direct device pointers to the input/output short2 textures, for fully
+// device-resident use (write sites into Input; read nearest-site from Output
+// after pba2DCompute).
+extern "C" short2 *pba2DInputDevice();
+extern "C" short2 *pba2DOutputDevice();
 
 #endif

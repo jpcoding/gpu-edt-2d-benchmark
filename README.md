@@ -93,6 +93,13 @@ see [`results/rtx5090_thorough.txt`](results/rtx5090_thorough.txt) and
 > `kernelProximatePoints`, `kernelColor`, …) plus its own format-conversion kernels — the "PBA" in
 > the name *is* the Parallel Banding Algorithm. The dominant `kernelColor` is latency-bound; no
 > kernel is compute-bound.
+>
+> A **per-kernel NPP-vs-NUS head-to-head** ([`results/npp_vs_nus_kernels_5090.md`](results/npp_vs_nus_kernels_5090.md))
+> decomposes the 4096² gap exactly: the shared PBA kernels match; NUS-tuned's ~1.38× win is **~80%
+> NPP format-conversion overhead** (`initInputVoronoi` + `generateAdditionalRelativeOutput`, ~211 µs
+> that a `short2`-native caller never pays) and **~20% two band choices** (NPP's `m3=8` phase-3 and
+> 32-band phase-2 vs tuned `m3=16` / 64-band). Same algorithm — the difference is the API and the
+> launch heuristic, not the core.
 
 ## The implementations in detail
 

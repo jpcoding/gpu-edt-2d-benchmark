@@ -27,13 +27,7 @@
 #include "edt_2d.hpp"      // ours native-2D (edt_2d_pba)
 #include "edt_fh.hpp"      // Felzenszwalb-Huttenlocher baseline
 
-// ---- NUS PBA+ 2D API (third_party/nus/pba2DHost.cu) ----
-extern "C" void pba2DInitialization(int textureSize, int phase1Band);
-extern "C" void pba2DDeinitialization();
-extern "C" void pba2DVoronoiDiagram(short* input, short* output, int m1, int m2, int m3);
-void pba2DInitializeInput(short* input);
-void pba2DCompute(int m1, int m2, int m3);
-#define NUS_MARKER (-32768)
+#include "pba2D.h"        // NUS PBA+ 2D public API (init/compute/voronoi/bridges, MARKER)
 
 using clk = std::chrono::high_resolution_clock;
 static double ms_since(clk::time_point t0){ return std::chrono::duration<double,std::milli>(clk::now()-t0).count(); }
@@ -130,7 +124,7 @@ int main(int argc, char** argv){
     {
       std::vector<short> in(2*N),out(2*N);
       for(size_t i=0;i<N;i++){ int x=i%S,y=i/S;
-        if(site[i]){in[2*i]=(short)x;in[2*i+1]=(short)y;} else {in[2*i]=NUS_MARKER;in[2*i+1]=NUS_MARKER;} }
+        if(site[i]){in[2*i]=(short)x;in[2*i+1]=(short)y;} else {in[2*i]=MARKER;in[2*i+1]=MARKER;} }
       int p1=eband,p2=edt_2d_m2(tex);
       for (int p3 : {edt_2d_m3(tex), 2}){
         pba2DVoronoiDiagram(in.data(),out.data(),p1,p2,p3);   // correctness pass

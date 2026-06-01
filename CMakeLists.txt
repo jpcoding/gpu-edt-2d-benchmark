@@ -42,6 +42,10 @@ add_executable(npp_prof prof/npp_prof.cu)
 target_link_libraries(npp_prof PRIVATE CUDA::nppif CUDA::nppc CUDA::nppisu)
 target_compile_options(npp_prof PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-w>)
 
+add_executable(nus_prof prof/nus_prof.cu)
+target_link_libraries(nus_prof PRIVATE nus_pba2d edt_headers)
+target_compile_options(nus_prof PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-w>)
+
 add_executable(tune prof/tune.cu)
 target_link_libraries(tune PRIVATE nus_pba2d edt_headers)
 target_compile_options(tune PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-w>)
