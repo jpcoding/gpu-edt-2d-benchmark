@@ -5,4 +5,5 @@ bench
 # CMake
 build/
 npp_prof
+nus_prof
 tune
