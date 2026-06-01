@@ -1,0 +1,11 @@
+model:  12th Gen Intel(R) Core(TM) i7-12700
+# CPU baseline: scipy.ndimage.distance_transform_edt (Maurer 2003), density=1%, best of 5
+size      best_ms     Mpix/s     Gpix/s
+1024      46.4721       22.6     0.0226
+2048     259.1811       16.2     0.0162
+4096    1613.4790       10.4     0.0104
+# CPU baseline: scipy.ndimage.distance_transform_edt (Maurer 2003), density=50%, best of 5
+size      best_ms     Mpix/s     Gpix/s
+1024      53.2000       19.7     0.0197
+2048     295.6287       14.2     0.0142
+4096    1757.0245        9.5     0.0095

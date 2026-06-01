@@ -40,6 +40,26 @@ This benchmark includes **FH as baseline #5** to make that comparison concrete: 
 PBA family is **~10× faster than FH** at 4096² (see below), so PBA is the right primitive — and
 NPP, being PBA internally, is the same algorithm as the academic code.
 
+### What the "vs CPU" speedups actually hide (quantified)
+
+We ran that exact CPU baseline — SciPy `distance_transform_edt` (Maurer 2003), single-threaded —
+on the **same machine** as the GPU numbers (i7-12700), so the inflation is measurable
+([`baselines/cpu_maurer_scipy.py`](baselines/cpu_maurer_scipy.py),
+[`results/cpu_maurer_5090box.txt`](results/cpu_maurer_5090box.txt)). At 1% sites:
+
+| size | CPU-Maurer (SciPy) | **PBA** (NUS-tuned) | FH (portable) | **PBA speedup vs CPU** | FH speedup vs CPU |
+|---|--:|--:|--:|--:|--:|
+| 1024² | 46.5 ms | 0.152 ms | 1.62 ms | **306×** | 29× |
+| 2048² | 259 ms | 0.271 ms | 3.30 ms | **956×** | 79× |
+| 4096² | 1613 ms | 0.730 ms | 8.51 ms | **2210×** | 190× |
+
+The headline numbers in those papers (**250×/400× vs CPU**) sit right in the **FH band** (~190× at
+4096²) — i.e. they describe *portable-FH-class* GPU performance. **PBA over the same CPU is ~2210×.**
+So the GPU-vs-GPU comparison they leave out (their method vs PBA) is ~2210/250 ≈ **9×** — the very
+gap we measure directly between FH and PBA. A big "vs CPU" number is hiding a GPU-vs-GPU loss.
+(Different CPU/machine than the original papers and an equivalent-not-identical input, so read the
+*magnitude*, not the third digit.)
+
 ## Results — RTX 5090, 1% random sites (compute-only, best of 11)
 
 `Gpix/s` = pixels/10⁹/s (base-1000 count rate). `GiB/s` = 4·pixels/1024³/s (the float distance
@@ -164,6 +184,7 @@ Makefile / CMakeLists.txt
 ours/edt_pba.hpp         our 3D PBA (MIT)
 ours/edt_2d.hpp          native-2D driver over the same kernels, MIT
 baselines/edt_fh.hpp     Felzenszwalb–Huttenlocher separable EDT (MIT)
+baselines/cpu_maurer_scipy.py  SciPy/Maurer CPU baseline (the "vs CPU" reference papers use)
 third_party/nus/         NUS PBA+ 2D, ported to CUDA 12+ (no <device_functions.h>); MIT
 prof/                    npp_prof.cu, tune.cu — NPP profiling + band sweep
 results/                 benchmark logs + npp_profile_5090.md
