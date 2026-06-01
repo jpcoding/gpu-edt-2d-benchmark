@@ -1,106 +1,136 @@
-# GPU 2D Euclidean Distance Transform — three implementations, head to head
+# GPU 2D Euclidean Distance Transform — implementations head to head
 
-A small, self-contained benchmark comparing three GPU implementations of the **exact 2D
-Euclidean Distance Transform / Voronoi diagram** on random binary images:
+A small, self-contained benchmark comparing GPU implementations of the **exact 2D Euclidean
+Distance Transform / Voronoi diagram** on binary images — the vendor library, the academic
+reference, our pipeline's interface, and the "portable" alternative — on the same GPU, same
+input, compute-only timing, all cross-verified to produce the same field.
 
 | # | implementation | kind | source | license |
 |---|---|---|---|---|
-| 1 | **NVIDIA NPP** `nppiDistanceTransformPBA` | 2D-native, vendor library | ships with the CUDA Toolkit | NVIDIA EULA (linked, not redistributed) |
-| 2 | **NUS PBA+** `pba2D` | 2D-native, academic reference | [orzzzjq/Parallel-Banding-Algorithm-plus](https://github.com/orzzzjq/Parallel-Banding-Algorithm-plus) | MIT (`third_party/nus/LICENSE`) |
-| 3 | **"ours-2D"** `edt_2d_pba` | **native 2D** EDT with our 3D-style device interface (over the NUS 2D kernels) | this project | MIT |
-| 4 | **"ours-3Don2D"** `edt_3d_pba` | our **3D** PBA run as `W×H×1` (shortcut, for contrast) | this project | MIT |
+| 1 | **NVIDIA NPP** `nppiDistanceTransformPBA` | 2D-native vendor library (internally = PBA) | ships with the CUDA Toolkit | NVIDIA EULA (linked, not redistributed) |
+| 2 | **NUS PBA+** `pba2D` | 2D-native academic reference (Parallel Banding Algorithm) | [orzzzjq/Parallel-Banding-Algorithm-plus](https://github.com/orzzzjq/Parallel-Banding-Algorithm-plus) | MIT (`third_party/nus/LICENSE`) |
+| 3 | **ours-2D** `edt_2d_pba` | **native 2D** EDT with our 3D-style device interface (over the NUS 2D kernels) | this project | MIT |
+| 4 | **ours-3Don2D** `edt_3d_pba` | our **3D** PBA run as `W×H×1` (shortcut, for contrast; ≤1024) | this project | MIT |
+| 5 | **FH** `edt_fh` | **Felzenszwalb–Huttenlocher** separable EDT — the *portable* SOTA alternative | this project (`baselines/`) | MIT |
 
-All three are fed the **same** random binary image, timed **compute-only** (data already
-device-resident, warm-up + best-of-10), and **cross-verified** to produce the same EDT.
+NUS is run at two band settings — **`m3=16`** (occupancy-tuned) and **`m3=2`** (the common
+default) — to expose the band-tuning lever directly.
 
-## Results (NVIDIA RTX 5090, ~1% random sites)
+## Is PBA still state of the art? (short answer: yes, on NVIDIA, for exact EDT)
+
+A literature check (2024–2025) found **nothing that beats PBA on GPU for the exact transform**:
+
+- Recent papers report speedups against a **sequential CPU** baseline — typically SciPy's
+  `distance_transform_edt`, i.e. **Maurer's algorithm** (Maurer et al. 2003) — not against PBA
+  (e.g. *GPU-Based Parallel EDT*, MDPI Mathematics 2025: 52× vs CPU; *Accelerating EDT*, IEEE
+  Access 2025: 250×/400× vs CPU). That choice inflates the numbers and quietly avoids the GPU
+  state of the art. The irony: **PBA's phase 2 is the *parallelized* Maurer scan** (our
+  `pba_kernelMaurerAxis`), so a "GPU-method vs CPU-Maurer" comparison is really a comparison
+  against the sequential form of a sub-step of the algorithm it's dodging. A fair claim has to put
+  the method next to PBA *on the same GPU* — which is what this benchmark does.
+- The one genuinely modern competitor, **[DistanceTransforms.jl](https://github.com/MolloiLab/DistanceTransforms.jl)**
+  (IEEE Access 2025), uses the **Felzenszwalb–Huttenlocher** separable algorithm and wins on
+  **portability** (CUDA + ROCm + Metal + oneAPI, Julia/Python, DL-loss integration), *not* raw
+  NVIDIA speed. It reports no PBA comparison.
+- The NUS authors note PBA is *mathematically equivalent* to Felzenszwalb (both O(N)); the
+  difference is the GPU mapping. NVIDIA's own [Xavier EDT talk (GTC 2019)](https://developer.download.nvidia.com/video/gputechconf/gtc/2019/presentation/s9165-euclidean-distance-transform-on-xavier.pdf)
+  recommends PBA for high resolution and Felzenszwalb only for small images.
+
+This benchmark includes **FH as baseline #5** to make that comparison concrete: on NVIDIA, the
+PBA family is **~10× faster than FH** at 4096² (see below), so PBA is the right primitive — and
+NPP, being PBA internally, is the same algorithm as the academic code.
+
+## Results — RTX 5090, 1% random sites (compute-only, best of 11)
+
+`Gpix/s` = pixels/10⁹/s (base-1000 count rate). `GiB/s` = 4·pixels/1024³/s (the float distance
+field written out, base-1024). Full multi-density log: [`results/rtx5090_thorough.txt`](results/rtx5090_thorough.txt).
 
 ```
-size   impl            time_ms       Mpix/s       Gpix/s    max_err
-256    ours-3Don2D      0.2279        287.5        0.288        ref
-256    ours-2D          0.0821        798.1        0.798       0.00
-256    NUS-PBA+         0.0785        834.4        0.834       0.00
-256    NPP              0.0810        809.5        0.810       0.97
-512    ours-3Don2D      0.4619        567.6        0.568        ref
-512    ours-2D          0.1071       2447.4        2.447       0.00
-512    NUS-PBA+         0.1041       2517.3        2.517       0.00
-512    NPP              0.1066       2458.9        2.459       0.97
-1024   ours-3Don2D      0.9381       1117.8        1.118        ref
-1024   ours-2D          0.1574       6660.4        6.660       0.00
-1024   NUS-PBA+         0.1519       6901.1        6.901       0.00
-1024   NPP              0.1606       6528.1        6.528       0.97
-2048   ours-2D          0.2928      14324.6       14.325       0.00
-2048   NUS-PBA+         0.2721      15416.4       15.416       0.00
-2048   NPP              0.3032      13832.0       13.832       0.97
-4096   ours-2D          0.8772      19126.3       19.126       0.00
-4096   NUS-PBA+         0.7297      22992.0       22.992       0.00
-4096   NPP              0.9809      17103.5       17.103       0.97
+size   impl              best_ms    Gpix/s     GiB/s   max_err
+256    ours-2D            0.0820     0.800     2.979      0.00
+256    NUS-PBA+(m3=16)    0.0793     0.826     3.078      0.00
+256    NUS-PBA+(m3=2)     0.0976     0.671     2.501      0.00
+256    NPP                0.0808     0.812     3.023      0.97
+256    FH                 0.3959     0.166     0.617      0.00
+512    ours-2D            0.1069     2.452     9.133      0.00
+512    NUS-PBA+(m3=16)    0.1042     2.515     9.369      0.00
+512    NPP                0.1070     2.450     9.125      0.97
+512    FH                 0.8137     0.322     1.200      0.00
+1024   ours-2D            0.1575     6.658    24.801      0.00
+1024   NUS-PBA+(m3=16)    0.1517     6.912    25.748      0.00
+1024   NPP                0.1607     6.525    24.309      0.97
+1024   FH                 1.6215     0.647     2.409      0.00
+2048   ours-2D            0.2909    14.419    53.716      0.00
+2048   NUS-PBA+(m3=16)    0.2713    15.459    57.589      0.00
+2048   NUS-PBA+(m3=2)     0.4169    10.060    37.478      0.00
+2048   NPP                0.3037    13.811    51.450      0.97
+2048   FH                 3.2994     1.271     4.736      0.00
+4096   ours-2D            0.8768    19.135    71.285      0.00
+4096   NUS-PBA+(m3=16)    0.7304    22.971    85.572      0.00
+4096   NUS-PBA+(m3=2)     1.0956    15.313    57.044      0.00
+4096   NPP                0.9815    17.094    63.681      0.97
+4096   FH                 8.5139     1.971     7.341      0.00
 ```
 
-> **With tuned bands the PBA implementations beat NPP at 4096² (1.34×) and tie it at ≤1024².**
-> ncu showed the dominant `kernelColor` (block `(64, m3)`) is latency-bound when under-occupied;
-> raising the common default `m3=2` to the max valid `m3=16` (1024-thread blocks) gives ~1.5×.
-> NPP runs the *same* algorithm and **does adapt** its bands (its `kernelColor` block, read from the
-> binary via ncu, is `m3=16` at 1024² but only `m3=8` at 4096²) — so it ties at small sizes and is
-> overtaken at 4096² precisely because `m3=16` beats its `m3=8` on this GPU. See
-> [`results/npp_profile_5090.md`](results/npp_profile_5090.md).
+**What the numbers say (4096²):**
+- **PBA ≫ FH on GPU**: NUS-tuned 23.0, ours-2D 19.1, NPP 17.1 vs **FH 1.97 Gpix/s** — the portable
+  separable algorithm is ~10× slower here. PBA's banding wins on GPU, exactly as the literature predicts.
+- **Band tuning is a real ~1.5×**: NUS `m3=16` (23.0) vs `m3=2` (15.3). The dominant `kernelColor`
+  is latency-bound when under-occupied; the max valid band `m3=16` (1024-thread blocks) fixes it.
+- **NPP runs the same PBA** and **adapts** its bands (block dims read from the binary via ncu:
+  `m3=16` @1024², `m3=8` @4096²) — so it ties the tuned PBA at small sizes and is overtaken at 4096²
+  only because `m3=16` beats its `m3=8` on Blackwell. See [`results/npp_profile_5090.md`](results/npp_profile_5090.md).
+- **Everything agrees**: `max_err 0.00` for ours/NUS/**FH** (FH is bit-exact to display precision,
+  even at 4096² where squared distances exceed 2²⁴). NPP's `0.97` is its 16-bit *truncated* integer
+  output (`<1` off everywhere), i.e. also correct.
 
-(full log: [`results/rtx5090.txt`](results/rtx5090.txt))
+The benchmark also sweeps **site density {1, 10, 50}%** and a **real NYX edge map** (35% sites) —
+see [`results/rtx5090_thorough.txt`](results/rtx5090_thorough.txt) and
+[`results/rtx5090_nyx.txt`](results/rtx5090_nyx.txt). Ranking is stable across all of them.
 
 > **nsys/ncu profiling of NPP** ([`results/npp_profile_5090.md`](results/npp_profile_5090.md))
-> reveals that NPP's `nppiDistanceTransformPBA` runs the **NUS PBA+ kernels** (`kernelFloodDown`,
+> shows NPP's `nppiDistanceTransformPBA` runs the **NUS PBA+ kernels** (`kernelFloodDown`,
 > `kernelProximatePoints`, `kernelColor`, …) plus its own format-conversion kernels — the "PBA" in
-> the name *is* the Parallel Banding Algorithm. So all three implementations here run the same core
-> algorithm; the dominant kernel (`kernelColor`) is latency-bound and no kernel is compute-bound.
+> the name *is* the Parallel Banding Algorithm. The dominant `kernelColor` is latency-bound; no
+> kernel is compute-bound.
 
-**Reading the table**
-- `max_err` is the largest distance disagreement vs. the reference field. **ours-2D / NUS = 0.00**
-  (bit-exact, including vs. the independent 3D code); **NPP = 0.97** — NPP returns the distance as a
-  *truncated* 16-bit integer, so it is `< 1` off everywhere, i.e. correct. Everything agrees.
-- **With tuned bands, `ours-2D` and NUS-PBA+ beat NPP** (e.g. 4096²: NUS 23.0, ours-2D 19.1, NPP
-  17.1 Gpix/s); see the tuning note above. `ours-2D` trails NUS slightly because it also runs our
-  `boundary→index/distance` conversion kernels. Both run at every size (no 1024 cap).
-- **`ours-3Don2D`** (the 3D code run as `W×H×1`) is ~3.9× slower and capped at 1024 — kept only to
-  show the cost of that shortcut.
+## The implementations in detail
 
-## The two "ours" entries
+- **ours-2D** ([`ours/edt_2d.hpp`](ours/edt_2d.hpp)) — a **native 2D EDT** exposing the same device
+  interface as this project's 3D EDT (1-byte boundary in; packed nearest-site `index` + `float
+  distance` out, all device-resident), so it drops into the 2D version of our pipeline. Its core is
+  the NUS PBA+ 2D kernels through a thin device bridge. ~as fast as NUS; the small gap is our
+  `boundary → index/distance` conversion kernels (which NUS doesn't run). 16-bit coords ⇒ no 1024 cap.
 
-- **`ours-2D`** ([`ours/edt_2d.hpp`](ours/edt_2d.hpp)) is a **native 2D EDT** that exposes the same
-  device interface as this project's 3D EDT — a 1-byte boundary map in, a packed nearest-site
-  `index` + `float distance` out, all device-resident — so it drops into the 2D version of our
-  pipeline. Its core is the **NUS PBA+ 2D kernels** (MIT), driven through a thin device bridge,
-  exactly as our 3D EDT wraps the NUS 3D kernels. It is therefore ~as fast as NUS; the small gap
-  (and its growth at 4096²) is the cost of our `boundary → index/distance` conversion kernels.
-  16-bit coordinates ⇒ **no 1024 cap** (up to 32767/axis).
+- **ours-3Don2D** ([`ours/edt_pba.hpp`](ours/edt_pba.hpp)) — our **3D** PBA on a `W×H×1` volume.
+  ~3–4× slower and capped at 1024, not from depth padding (empty z-planes are nearly free) but
+  **structurally**: the 3D pipeline spends its cheap flood pass on the trivial Z axis, so both real
+  axes are resolved by two *expensive* Maurer/Color passes; a native 2D PBA floods a real axis and
+  needs only one. Kept as a bit-exact cross-check and to quantify that shortcut.
 
-- **`ours-3Don2D`** ([`ours/edt_pba.hpp`](ours/edt_pba.hpp)) is our **3D** PBA applied to a `W×H×1`
-  volume. It is ~3.9× slower and capped at 1024, *not* because of depth padding (that is nearly
-  free — the padded z-planes are empty), but **structurally**: the 3D pipeline spends its cheap
-  flood pass on the trivial Z axis, so both real axes are resolved by two *expensive* Maurer/Color
-  passes, where a native 2D PBA spends its flood on a real axis and needs only one. It is kept as a
-  correctness cross-check (bit-for-bit with the native path) and to quantify that shortcut.
-
-So: `ours-2D` is a competitive, exact, uncapped native-2D EDT with our pipeline's interface;
-`ours-3Don2D` shows what using the 3D code for 2D costs. Both agree bit-for-bit with NUS and within
-truncation of NPP.
+- **FH** ([`baselines/edt_fh.hpp`](baselines/edt_fh.hpp)) — the **Felzenszwalb–Huttenlocher**
+  separable lower-envelope-of-parabolas algorithm, O(N), exact, the algorithm behind the portable
+  multi-vendor libraries. Our implementation is *competently coalesced* (transposes between the two
+  1D-DT passes) so it isn't a strawman — yet it's still ~10× behind PBA on NVIDIA, because the
+  per-line envelope walk has far less parallelism and worse memory locality than PBA's banding.
 
 ## Build & run
 
-Requires the **CUDA Toolkit** (with NPP — included by default). Tested with CUDA 13 on
+Requires the **CUDA Toolkit** (with NPP — included by default). Tested with CUDA 12/13 on
 `sm_120` (RTX 5090) and `sm_89` (RTX 4070).
 
 ```bash
 make                 # builds ./bench  (nvcc -arch=native)
-./bench              # default sizes: 256 512 1024 2048 4096   (random sites)
-./bench 512 4096     # custom sizes
+./bench              # default: sizes 256..4096 × densities {1,10,50}% (random sites)
+./bench 512 4096     # custom sizes (still sweeps the three densities)
 ./bench nyx field.f32 512   # real data: binary image = quantization edges of a
-                            # 512x512 slice of a NYX field (rel_eb=1e-2)
+                            # 512×512 slice of a NYX field (rel_eb=1e-2)
 ```
 
-The `nyx` mode is a real-data correctness check: on a 512² slice of NYX `velocity_x`
-(~35% edge sites) on the RTX 5090, `ours-2D` matches NUS/the 3D code bit-for-bit
-(`max_err 0.00`) and stays competitive (1.10 vs NUS 1.12 Gpix/s) — see
-[`results/rtx5090_nyx.txt`](results/rtx5090_nyx.txt).
+CMake is also provided (cross-platform, modern target-based):
+```bash
+cmake -B build && cmake --build build -j   # builds bench, npp_prof, tune
+```
 
 If `nvcc`/NPP are not on your default path:
 ```bash
@@ -110,31 +140,33 @@ export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
 
 ## Methodology
 
-- Input: a random binary image, ~1% of pixels are sites (fixed seed → reproducible).
+- Input: a binary image — synthetic random sites at fixed seed (1/10/50%) or a real NYX edge map.
 - Each implementation gets the **same** sites in its own native input format
-  (NPP: 8-bit, sites = 0; NUS: `short2` coords / `MARKER`; ours: 1-byte boundary mask).
-- **Compute-only timing**: inputs are uploaded once; only the on-GPU EDT kernels are timed
-  (warm-up launch first, then best of 10). Host↔device transfers are excluded.
-- **Verification**: the exact distance field of each implementation is compared element-wise
-  against the reference (ours for ≤1024, NUS above); `max_err` is reported.
+  (NPP: 8-bit, sites=0; NUS: `short2` coords / `MARKER`; ours: 1-byte boundary mask; FH: 1-byte mask).
+- **Compute-only timing**: inputs uploaded once; only on-GPU EDT kernels are timed (warm-up, then
+  **best + median of 11**). Host↔device transfers are excluded — including NUS's per-iteration input
+  restore (`pba2DInitializeInput` is a destructive-buffer H2D refill, run *before* the timer each iteration).
+- **Verification**: every implementation's distance field is compared element-wise against the
+  reference (ours for ≤1024, NUS above); `max_err` is reported.
 
 ## Layout
 
 ```
-bench.cu                 unified harness (generate, run all three, time, verify)
-Makefile
+bench.cu                 unified harness (generate, run all impls, time, verify)
+Makefile / CMakeLists.txt
 ours/edt_pba.hpp         our 3D PBA (MIT)
-ours/edt_2d.hpp          native-2D driver over the same kernels (z_size=1), MIT
-third_party/nus/         NUS PBA+ 2D, ported to CUDA 12+ (removed <device_functions.h>); MIT
-results/rtx5090.txt      benchmark log
+ours/edt_2d.hpp          native-2D driver over the same kernels, MIT
+baselines/edt_fh.hpp     Felzenszwalb–Huttenlocher separable EDT (MIT)
+third_party/nus/         NUS PBA+ 2D, ported to CUDA 12+ (no <device_functions.h>); MIT
+prof/                    npp_prof.cu, tune.cu — NPP profiling + band sweep
+results/                 benchmark logs + npp_profile_5090.md
 ```
 
 ## Credits & licenses
 
-- **NUS PBA+** — Parallel Banding Algorithm, *Cao, Tang, Mohamed, Tan (ACM I3D 2010)*;
-  code © 2019 School of Computing, National University of Singapore, MIT-licensed
-  (`third_party/nus/LICENSE`). Only `<device_functions.h>` was removed for CUDA 12+; the
-  algorithm/kernels are unchanged.
-- **NVIDIA NPP** — `nppiDistanceTransformPBA`, part of the CUDA Toolkit; linked at build
-  time, not redistributed here.
-- **ours** and this benchmark harness — MIT (`LICENSE`).
+- **NUS PBA+** — Parallel Banding Algorithm, *Cao, Tang, Mohamed, Tan (ACM I3D 2010)*; code
+  © 2019 School of Computing, NUS, MIT (`third_party/nus/LICENSE`). Only `<device_functions.h>`
+  was removed for CUDA 12+; the algorithm/kernels are unchanged.
+- **Felzenszwalb–Huttenlocher** — *Distance Transforms of Sampled Functions*, Theory of Computing 2012.
+- **NVIDIA NPP** — `nppiDistanceTransformPBA`, part of the CUDA Toolkit; linked, not redistributed.
+- **ours**, **FH**, and this harness — MIT (`LICENSE`).

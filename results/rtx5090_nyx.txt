@@ -1,12 +1,12 @@
-# GPU: NVIDIA GeForce RTX 5090
-# 2D EDT benchmark — ~1% random sites, best of 10 (compute-only, device-resident)
-#
-size   impl            time_ms       Mpix/s       Gpix/s    max_err
-----   ----            -------       ------       ------    -------
-# NYX slice /home/jp/data/nyx_512x512x512/velocity_x.f32  512x512  edge sites = 35.3%
-#
-512    ours-3Don2D      0.6738        389.1        0.389        ref
-512    ours-2D          0.2378       1102.4        1.102       0.00
-512    NUS-PBA+         0.2345       1117.9        1.118       0.00
-512    NPP              0.1763       1486.5        1.487       0.97
-#
+# GPU: NVIDIA GeForce RTX 5090   (CUDA 12.0, 170 SMs)
+# 2D exact EDT — compute-only, device-resident, best+median of 11
+# Gpix/s = pixels/1e9/s (base-1000 count) ; GiB/s = 4*pixels/1024^3/s (float dist field, base-1024)
+
+# === NYX slice /home/jp/data/nyx_512x512x512/velocity_x.f32  512x512  edge sites=35.3% ===
+size   impl              best_ms    med_ms    Gpix/s     GiB/s   max_err
+512    ours-3Don2D        0.6717    0.6764     0.390     1.454       ref
+512    ours-2D            0.1758    0.1760     1.491     5.555      0.00
+512    NUS-PBA+(m3=16)    0.1725    0.1732     1.520     5.663      0.00
+512    NUS-PBA+(m3=2)     0.2150    0.2152     1.219     4.543      0.00
+512    NPP                0.1762    0.1769     1.488     5.543      0.97
+512    FH                 1.1718    1.1773     0.224     0.833      0.00

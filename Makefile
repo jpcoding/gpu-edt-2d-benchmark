@@ -1,6 +1,6 @@
 NVCC      ?= nvcc
 ARCH      ?= native
-NVCCFLAGS  = -std=c++17 -O3 -arch=$(ARCH) -Xcompiler -w -Iours -Ithird_party/nus
+NVCCFLAGS  = -std=c++17 -O3 -arch=$(ARCH) -Xcompiler -w -Iours -Ibaselines -Ithird_party/nus
 LDFLAGS    = -lnppif -lnppc -lnppisu
 
 bench: bench.cu third_party/nus/pba2DHost.cu

@@ -1,3 +1,8 @@
 bench
 *.o
 *.exe
+
+# CMake
+build/
+npp_prof
+tune
