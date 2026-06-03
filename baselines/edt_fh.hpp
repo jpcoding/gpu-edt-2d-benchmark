@@ -95,21 +95,23 @@ __global__ void fh_transpose(const float* __restrict__ in, float* __restrict__ o
 inline size_t fh_scratch_floats(int W,int H){ return (size_t)W*H; }      // A or B
 inline size_t fh_zb_floats(int W,int H){ return (size_t)W*H + (W>H?W:H); }
 
+// All buffers are per-call (no global state) -> reentrant: distinct buffer sets on
+// distinct streams run independently, which is what the concurrency benchmark uses.
 inline void edt_fh(const char* d_b, float* d_dist, int W, int H,
-                   float* A, float* B, int* vb, float* zb){
+                   float* A, float* B, int* vb, float* zb, cudaStream_t s=0){
   int N = W*H;
-  fh_init<<<(N+255)/256,256>>>(d_b, A, N);
+  fh_init<<<(N+255)/256,256,0,s>>>(d_b, A, N);
   // pass 1: DT along y (width=W, height=H)        A -> B
-  fh_pass<<<(W+127)/128,128>>>(A, B, W, H, vb, zb);
+  fh_pass<<<(W+127)/128,128,0,s>>>(A, B, W, H, vb, zb);
   // transpose B(W x H) -> A(now H-wide)
   dim3 thr(FH_TILE,FH_TILE);
   dim3 g1((W+FH_TILE-1)/FH_TILE,(H+FH_TILE-1)/FH_TILE);
-  fh_transpose<false><<<g1,thr>>>(B, A, W, H);
+  fh_transpose<false><<<g1,thr,0,s>>>(B, A, W, H);
   // pass 2: DT along x (width=H, height=W)         A -> B
-  fh_pass<<<(H+127)/128,128>>>(A, B, H, W, vb, zb);
+  fh_pass<<<(H+127)/128,128,0,s>>>(A, B, H, W, vb, zb);
   // transpose + sqrt  B -> d_dist (W x H)
   dim3 g2((H+FH_TILE-1)/FH_TILE,(W+FH_TILE-1)/FH_TILE);
-  fh_transpose<true><<<g2,thr>>>(B, d_dist, H, W);
+  fh_transpose<true><<<g2,thr,0,s>>>(B, d_dist, H, W);
 }
 
 } // namespace fh

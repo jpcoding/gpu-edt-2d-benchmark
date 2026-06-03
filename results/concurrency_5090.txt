@@ -1,0 +1,8 @@
+# GPU: NVIDIA GeForce RTX 5090 (170 SMs).  M=8 independent FH transforms, best of 10.
+# GiB/s = aggregate 4*M*pixels/1024^3/s (base-1024). speedup = serial_ms / concurrent_ms.
+size    serial_ms  concur_ms   speedup serial_GiB/s concur_GiB/s
+256        3.1595     0.4566      6.92         0.62         4.28
+512        6.5413     0.8642      7.57         1.19         9.04
+1024      13.3268     1.7363      7.68         2.34        18.00
+2048      28.5139     6.7125      4.25         4.38        18.62
+4096      67.7036    19.4879      3.47         7.39        25.66

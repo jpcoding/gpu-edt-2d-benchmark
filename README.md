@@ -121,6 +121,26 @@ see [`results/rtx5090_thorough.txt`](results/rtx5090_thorough.txt) and
 > 32-band phase-2 vs tuned `m3=16` / 64-band). Same algorithm — the difference is the API and the
 > launch heuristic, not the core.
 
+## Throughput: the concurrency lever
+
+A single transform is **latency-bound** (ncu: `kernelColor` at 6.7% SM / 1.0% DRAM — pointer-chase
+stalls), so it leaves most of the GPU idle, and the single-kernel levers (banding/occupancy) are
+already tuned out. The way to raise *aggregate* throughput is to run **independent transforms
+concurrently on CUDA streams** so their latency overlaps and fills the SMs. Measured on the 5090
+(M=8 independent FH transforms, serial vs streamed —
+[`results/concurrency_5090.md`](results/concurrency_5090.md)):
+
+| size | speedup | aggregate GiB/s (serial→concurrent) |
+|---|--:|--:|
+| 1024² | **7.7×** | 2.3 → 18.0 |
+| 2048² | 4.3× | 4.4 → 18.6 |
+| 4096² | 3.5× | 7.4 → 25.7 |
+
+The speedup tracks the idle capacity: near the M=8 ceiling at small sizes (one transform uses a
+sliver of 170 SMs), tapering at 4096² where a transform already fills much of the GPU. *Caveat:*
+measured with FH because it's reentrant; the NUS/NPP PBA engine uses global device buffers, so
+batching the SOTA kernel first needs a stream-safe (per-instance) refactor.
+
 ## The implementations in detail
 
 - **ours-2D** ([`ours/edt_2d.hpp`](ours/edt_2d.hpp)) — a **native 2D EDT** exposing the same device

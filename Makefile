@@ -13,6 +13,9 @@ npp_prof: prof/npp_prof.cu
 nus_prof: prof/nus_prof.cu third_party/nus/pba2DHost.cu
 	$(NVCC) -std=c++17 -O3 -arch=$(ARCH) -Xcompiler -w -Ithird_party/nus $^ -o $@
 
+concurrency: prof/concurrency.cu
+	$(NVCC) -std=c++17 -O3 -arch=$(ARCH) -Xcompiler -w -Ibaselines $< -o $@
+
 tune: prof/tune.cu third_party/nus/pba2DHost.cu
 	$(NVCC) -std=c++17 -O3 -arch=$(ARCH) -Xcompiler -w -Ithird_party/nus $^ -o $@
 
@@ -20,6 +23,6 @@ run: bench
 	./bench
 
 clean:
-	rm -f bench npp_prof nus_prof tune
+	rm -f bench npp_prof nus_prof concurrency tune
 
 .PHONY: run clean
